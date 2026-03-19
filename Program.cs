@@ -13,13 +13,13 @@ namespace ChoushiMakase
         static int bufferSize = 2048;
 
         /* Determines how much of the note has control points attached to it. The default value is 0.5, meaning half of the note. */
-        static double amountToBend = 0.5;
+        static double amountToBend = 0.5; //should be 0.5 or smth
 
         /* Determines how much the frequency data in Hz is scaled by. The greater the value, the less dramatic the pitchbends. */
         static double scaleFactor = 100.0;
 
         /* Determines how much the frequency data in Hz is shifted downwards by. Strongly impacted by changes in scaleFactor. */
-        static double shiftFactor = 30.0;
+        static double shiftFactor = 0.0;
 
         static void Main(string[] args)
         {
@@ -53,7 +53,7 @@ namespace ChoushiMakase
             return sampleFrequencies;
         }
 
-        /* Determines the more prevalent frequency in a sample. */
+        /* Determines the most prevalent frequency in a sample using the discrete Fourier transform (FFT). */
         static double[] GetPitchData(string audioFilePath)
         {
             var audioFile = new AudioFileReader(audioFilePath);
@@ -67,7 +67,6 @@ namespace ChoushiMakase
             int samplesRead = audioFile.Read(amplitudeValues, 0, bufferSize);
             while (samplesRead > 0)
             {
-
                 double[] input = new double[bufferSize];
                 for (int i = 0; i < bufferSize; i++)
                 {
@@ -84,23 +83,31 @@ namespace ChoushiMakase
                 /* Tapering the edges of each sample to reduce spectral leakage. */
                 window.ApplyInPlace(input);
 
-                /* Determining the most prevalent frequency amongst all the noise. */
+                /* Computing the FFT from the array of input values. */
                 System.Numerics.Complex[] spectrum = input.Select(v => new System.Numerics.Complex(v, 0)).ToArray();
                 FFT.Forward(spectrum);
-                double[] magnitude = FFT.Magnitude(spectrum);
 
-                int maxIndex = 0;
-                double maxValue = double.MinValue;
+                /* Computing the magnitude to help determine where the frequency peaks in half of each sample. */
+                double[] magnitude = new double[spectrum.Length];
                 for (int i = 0; i < magnitude.Length; i++)
                 {
-                    if (magnitude[i] > maxValue)
+                    magnitude[i] = spectrum[i].Magnitude;
+                }
+
+                /* Finding the peak magnitude. */
+                int peakIndex = 0;
+                double peakValue = double.MinValue;
+                for (int i = 0; i < magnitude.Length / 2; i++)
+                {
+                    if (magnitude[i] > peakValue)
                     {
-                        maxValue = magnitude[i];
-                        maxIndex = i;
+                        peakValue = magnitude[i];
+                        peakIndex = i;
                     }
                 }
 
-                double peakFrequency = (double)maxIndex * sampleRate / bufferSize;
+                /* Calculating the frequency at the peak of the note, rather than at its first harmonic, which is too general. */
+                double peakFrequency = (double)(peakIndex * (sampleRate / spectrum.Length));
                 peakFrequencies.Add(peakFrequency);
 
                 samplesRead = audioFile.Read(amplitudeValues, 0, bufferSize);
@@ -128,6 +135,10 @@ namespace ChoushiMakase
             {
                 /* Calculating the number of samples that span each individual note. */
                 int samplesForNote = (note.GetLength() * sampleFrequencies.Length) / ustLength;
+
+                if (samplesForNote <= 0) {
+                    continue;
+                }
 
                 /* Determining how much each sample is spaced across the note, based on UTAU's default BPM of 120. */
                 double tempoFactor = 120 / utauPlugin.Tempo;
